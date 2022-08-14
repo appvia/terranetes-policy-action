@@ -1,0 +1,82 @@
+---
+name: terranetes-policy
+author: info@appvia.io
+description: |
+  The terranetes policy action is used as part of the workflows component
+  (https://terranetes.appvia.io/terranetes-controller/category/workflows/) and
+  used to verify a terraform module against organizational policy.
+inputs:
+  policy_url:
+    description: |
+      URL for your organizational policy repository. This is the repository
+      which contains the Checkov i.e. github.com/appvia/terranetes-policy@v0.1.0
+    default: ""
+    required: false
+  policy_version:
+    description: |
+      The branch or tag we should checkout in the policy repository
+    default: ""
+    required: false
+  policy_ssh_key:
+    description: |
+      A deployment key used to clone the external policy repository. Review
+      https://docs.github.com/en/developers/overview/managing-deploy-keys
+    default: ""
+    required: false
+  environment:
+    description: |
+      By verify the module against all environment configurations. You can
+      override this and specify environment here.
+    required: false
+    default: ""
+  directory:
+    description: Is the directory containing the terranetes code
+    required: true
+    default: "."
+  configuration:
+    description: Is the path of a Configuration resource to verify
+    required: false
+    default: ""
+branding:
+  color: purple
+  icon: shield
+runs:
+  using: composite
+  steps:
+    - name: Security Policies
+      if: ${{ inputs.policy_url != '' }}
+      uses: actions/checkout@v3
+      with:
+        path: terranetes-policies
+        ref: ${{ inputs.policy_version }}
+        repository: ${{ inputs.policy_url }}
+        ssh-key: ${{ inputs.policy_ssh_key }}
+    - name: Validate Input
+      shell: bash
+      run: |
+        if [[ -z "${{ inputs.directory }}" && -z "${{ inputs.configuration }}" ]]; then
+          echo "Invalid input, either directory or configuration must be defined"
+          exit 1
+        fi
+    - name: Setup Environment
+      if: ${{ inputs.environment != '' }}
+      run: cp terranetes-policies/envs/${{ inputs.environment }}.yaml .checkov.yaml
+      shell: bash
+    - name: Download CLI
+      if: ${{ inputs.configuration != '' }}
+      run: |
+        curl -sL https://github.com/appvia/terranetes-controller/releases/download/v0.3.6/tnctl-linux-amd64 -o /tmp/tnctl
+        chmod +x /tmp/tnctl
+        sudo cp /tmp/tnctl /bin/tnctl
+      shell: bash
+    - name: Generate Code
+      if: ${{ inputs.configuration != '' }}
+      run: tnctl convert configuration ${{ inputs.configuration }} > ${{ inputs.directory }}/main.tf
+      shell: bash
+    - name: Verify Policy
+      id: security
+      uses: bridgecrewio/checkov-action@master
+      with:
+        directory: ${{ inputs.directory }}
+        download_external_modules: true
+        framework: terraform
