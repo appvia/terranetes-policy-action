@@ -23,18 +23,17 @@ inputs:
       https://docs.github.com/en/developers/overview/managing-deploy-keys
     default: ""
     required: false
-  environment:
+  configuration:
     description: |
-      By verify the module against all environment configurations. You can
-      override this and specify environment here.
+      The path of the configuration file for checkov to use
     required: false
     default: ""
   directory:
     description: Is the directory containing the terranetes code
     required: true
     default: "."
-  configuration:
-    description: Is the path of a Configuration resource to verify
+  resource:
+    description: Is the path of a terranetes Configuration resource to verify
     required: false
     default: ""
 branding:
@@ -54,29 +53,50 @@ runs:
     - name: Validate Input
       shell: bash
       run: |
-        if [[ -z "${{ inputs.directory }}" && -z "${{ inputs.configuration }}" ]]; then
-          echo "Invalid input, either directory or configuration must be defined"
+        if [[ -z "${{ inputs.resource }}" && -z "${{ inputs.directory }}" ]]; then
+          echo "Either directory or resource must be defined"
           exit 1
         fi
     - name: Setup Environment
-      if: ${{ inputs.environment != '' }}
-      run: cp terranetes-policies/envs/${{ inputs.environment }}.yaml .checkov.yaml
+      id: config
+      run: |
+        if [[ -n "${{ inputs.policy_url }}" ]]; then
+          echo "Enabling Central Security Policies"
+          if [[ -n "${{ inputs.configuration }}" ]]; then
+            if [[ -f "terranetes-policies/${{ inputs.configuration }}" ]]; then
+              echo '::set-output name=config_file::terranetes-policies/${{ inputs.configuration }}'
+            else
+              echo "Checkov Configuration does not exist" && exit 1
+            fi
+          else
+            if [[ -f "terranetes-policies/.checkov.yaml" ]]; then
+              echo '::set-output name=config_file::terranetes-policies/.checkov.yaml'
+            else
+              echo '::set-output name=config_file::'
+            fi
+          fi
+        else
+          echo "No central security policies"
+          echo '::set-output name=config_file::${{ inputs.configuration }}'
+        fi
       shell: bash
     - name: Download CLI
-      if: ${{ inputs.configuration != '' }}
+      if: ${{ inputs.resource != '' }}
       run: |
         curl -sL https://github.com/appvia/terranetes-controller/releases/download/v0.3.6/tnctl-linux-amd64 -o /tmp/tnctl
         chmod +x /tmp/tnctl
         sudo cp /tmp/tnctl /bin/tnctl
       shell: bash
     - name: Generate Code
-      if: ${{ inputs.configuration != '' }}
-      run: tnctl convert configuration ${{ inputs.configuration }} > ${{ inputs.directory }}/main.tf
+      if: ${{ inputs.resource != '' }}
+      run: |
+        tnctl convert configuration ${{ inputs.resource }} > ${{ inputs.directory }}/main.tf
       shell: bash
     - name: Verify Policy
       id: security
       uses: bridgecrewio/checkov-action@master
       with:
-        directory: ${{ inputs.directory }}
+        config_file: "${{ steps.config.outputs.config_file }}"
+        directory: "${{ inputs.directory }}"
         download_external_modules: true
-        framework: terraform
+        framework: "terraform"
